@@ -1,16 +1,17 @@
 data_dir: './data/'
 
 seed: 0
-antigen_max_len: 254
+antigen_max_len: 1022
 epitope_max_len: 62
 
 batch_size: 512
 epochs: 20
-learning_rate: 1e-3
+learning_rate: 1e-4
 
 embedding_dim: 1280
 d_model: 1280
 hidden_dim: 128
+# hidden_dim: 256
 n_encoder_layers: 3
 
 save_checkpoint: false

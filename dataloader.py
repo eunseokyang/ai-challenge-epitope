@@ -20,21 +20,26 @@ class EpitopeDataset(Dataset):
         fname = info['antigen_indices']
         antigen = np.load(pjoin(self.data_dir, f"{fname}.npy"))
         epitope = np.zeros((self.tokenized_len, antigen.shape[-1]))
-        epitope[:seq_len, :] = antigen[info['start_pos']:info['end_pos']+1]
-        
+        ep = antigen[info['start_pos']:info['end_pos']+1]
+
+        epitope[:seq_len, :] = ep
+        epitope_reversed = np.zeros((self.tokenized_len, antigen.shape[-1]))
+        epitope_reversed[:seq_len, :] = ep[:,::-1]
+
         mask = np.zeros(self.tokenized_len)
         mask[:seq_len] = 1
         
         epitope = torch.tensor(epitope, dtype=torch.float32)
+        epitope_reversed = torch.tensor(epitope_reversed, dtype=torch.float32)
         antigen_full = torch.tensor(np.eye(2)[antigen_full], dtype=torch.float32)
         mask = torch.tensor(mask, dtype=torch.float32)
         
         if self.is_train:
             label = info['label']
             label = torch.tensor(label, dtype=torch.float32)
-            return epitope, mask, antigen_full, label
+            return epitope, epitope_reversed, mask, antigen_full, label
         else:
-            return epitope, mask, antigen_full
+            return epitope, epitope_reversed, mask, antigen_full
 
     def __len__(self):
         return len(self.processed)

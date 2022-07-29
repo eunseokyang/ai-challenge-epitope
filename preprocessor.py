@@ -80,7 +80,7 @@ class Preprocessor:
         os.makedirs(pjoin(self.save_dir, self.mode), exist_ok=True)
 
     def save_df(self, df):
-        df.to_csv(pjoin(self.data_dir, f'{self.mode}_processed.csv'), index=False)
+        df.to_csv(pjoin(self.data_dir, f'{self.mode}_processed_{self.antigen_max_len+2}.csv'), index=False)
 
     def save_antigen_repr_sep(self, out, fname):
         np.save(pjoin(self.save_dir, self.mode, f'{fname}'), out)
@@ -181,12 +181,14 @@ class Preprocessor:
 
         np.save(pjoin(self.save_dir, f'tokenized'), tokenized_antigens)
         self.save_df(result_df)
-        self.inference(tokenized_antigens)
+        # self.inference(tokenized_antigens)
 
 if __name__ == '__main__':
+    antigen_max_len = 1022
     preprocessor = Preprocessor(mode='validation',
-                                save_dir='/data2/eunseok/antigen_256/', 
-                                antigen_max_len=254,
+                                data_dir='./data/',
+                                save_dir=f'/data2/eunseok/antigen_{antigen_max_len+2}/', 
+                                antigen_max_len=antigen_max_len,
                                 epitope_max_len=62,
                                 )
     preprocessor.preprocess()

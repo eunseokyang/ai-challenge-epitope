@@ -10,7 +10,7 @@ import pandas as pd
 from sklearn.metrics import f1_score
 import torch
 import torch.nn as nn
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, ExponentialLR
 from torch.utils.data import DataLoader
 import wandb
 
@@ -23,9 +23,9 @@ now = datetime.now().strftime('%y%m%d_%H%M%S')
 checkpoint_dir = Path(f'./checkpoints/{now}/')
 
 def evaluate(model, val_loader, device, thresholds=(0.1, 0.3, 0.5, 0.8)):
-    # loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.FloatTensor([8]).to(device))
+    loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.FloatTensor([8]).to(device))
     
-    loss_fn = FocalLoss()
+    # loss_fn = FocalLoss()
 
     n_eval_batches = len(val_loader)
     losses = 0
@@ -35,14 +35,16 @@ def evaluate(model, val_loader, device, thresholds=(0.1, 0.3, 0.5, 0.8)):
 
     model.eval()
 
-    for batch, (epitope, mask, antigen_full, label) in tqdm(enumerate(val_loader)):
+    for batch, (epitope, epitope_reversed, mask, antigen_full, label) in tqdm(enumerate(val_loader)):
         epitope = epitope.to(device)
-        mask = mask.to(device)
+        epitope_reversed = epitope_reversed.to(device)
+        # mask = mask.to(device)
+        lengths = mask.sum(axis=1).type(torch.long)
         antigen_full = antigen_full.to(device)
         label = label.to(device)
 
         with torch.no_grad():
-            pred = model(epitope, antigen_full, mask)
+            pred = model(epitope, epitope_reversed, antigen_full, mask, lengths)
             loss = loss_fn(pred, label)
             losses += loss
 
@@ -59,8 +61,8 @@ def evaluate(model, val_loader, device, thresholds=(0.1, 0.3, 0.5, 0.8)):
     return losses / n_eval_batches, val_f1s
 
 def load_data(data_dir):
-    train_data = pd.read_csv(data_dir + './train_processed.csv')
-    val_data = pd.read_csv(data_dir + './validation_processed.csv')
+    train_data = pd.read_csv(data_dir + './train_processed_1024.csv')
+    val_data = pd.read_csv(data_dir + './validation_processed_1024.csv')
 
     # pos_data = train_data[train_data['label'] == True]
     # pos_data_concat = pd.concat([pos_data for _ in range(9)], ignore_index=True)
@@ -74,8 +76,8 @@ def train(cfg, experiment):
     # loading data
     train_processed, val_processed = load_data(cfg.data_dir)
 
-    train_dataset = EpitopeDataset(train_processed, data_dir='/data2/eunseok/antigen_256/train/')
-    val_dataset = EpitopeDataset(val_processed, data_dir='/data2/eunseok/antigen_256/validation/')
+    train_dataset = EpitopeDataset(train_processed, data_dir='/data2/eunseok/antigen_1024/train/')
+    val_dataset = EpitopeDataset(val_processed, data_dir='/data2/eunseok/antigen_1024/validation/')
 
     print(f"train len: {len(train_dataset)}")
     print(f"val len: {len(val_dataset)}")
@@ -96,18 +98,19 @@ def train(cfg, experiment):
     #     hidden_dim=cfg.hidden_dim,
     #     n_encoder_layers=cfg.n_encoder_layers
     # ) 
-    model = Linear(embedding_dim=cfg.embedding_dim, hidden_dim=cfg.hidden_dim)
-    # model = CustomLSTM(embedding_dim=cfg.embedding_dim, hidden_dim=cfg.hidden_dim)
+    # model = Linear(embedding_dim=cfg.embedding_dim, hidden_dim=cfg.hidden_dim)
+    model = CustomLSTM2(embedding_dim=cfg.embedding_dim, hidden_dim=cfg.hidden_dim)
     model = model.to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
+    scheduler = ExponentialLR(optimizer, 0.8)
     # scheduler = CosineAnnealingWarmRestarts(optimizer, 10000)
     # optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
     # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
     # scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=0.001, steps_per_epoch=len(train_loader), pct_start=0.1, epochs=epochs)
 
-    # loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.FloatTensor([8]).to(device))
-    loss_fn = FocalLoss()
+    loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.FloatTensor([8]).to(device))
+    # loss_fn = FocalLoss()
     
     global_step = 0
     for epoch in range(1, cfg.epochs+1):
@@ -115,13 +118,15 @@ def train(cfg, experiment):
         epoch_loss = 0
 
         with tqdm(total=len(train_dataset), desc=f'Epoch {epoch}/{cfg.epochs}', unit='epitope') as pbar:
-            for batch, (epitope, mask, antigen_full, label) in enumerate(train_loader):
+            for batch, (epitope, epitope_reversed, mask, antigen_full, label) in enumerate(train_loader):
                 epitope = epitope.to(device)
-                mask = mask.to(device)
+                epitope_reversed = epitope_reversed.to(device)
+                lengths = mask.sum(axis=1).type(torch.long)
+                # mask = mask.to(device)
                 antigen_full = antigen_full.to(device)
                 label = label.to(device)
 
-                pred = model(epitope, antigen_full, mask)
+                pred = model(epitope, epitope_reversed, antigen_full, mask, lengths)
                 loss = loss_fn(pred, label)
 
                 optimizer.zero_grad()
@@ -166,6 +171,8 @@ def train(cfg, experiment):
                 torch.save(model.state_dict(), str(checkpoint_dir / 'checkpoint_epoch{}.pth'.format(epoch)))
                 # logging.info(f'Checkpoint {epoch} saved!')
 
+        scheduler.step(epoch-1)
+
 
 if __name__=='__main__':
     cfg = OmegaConf.load('./config.yaml')
@@ -173,7 +180,7 @@ if __name__=='__main__':
         project='Epitope',
         config=OmegaConf.to_container(cfg),
         # name=cfg.run_name,
-    #    mode='disabled'
+        # mode='disabled'
     )
 
     seed_all(seed=cfg.seed)

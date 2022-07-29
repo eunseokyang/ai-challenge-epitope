@@ -12,7 +12,7 @@ def seed_all(seed=0):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
-
+    torch.backends.cudnn.benchmark = True
 
 class PositionalEncoding(nn.Module):
     # (B, L, H), batch-first

@@ -1,5 +1,7 @@
-from numpy import True_
+from numpy import True_, true_divide
+import torch
 import torch.nn as nn
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from utils import PositionalEncoding
 
@@ -8,19 +10,71 @@ class CustomLSTM(nn.Module):
         super().__init__()
         self.epitope_lstm = nn.LSTM(input_size=embedding_dim, 
                                     hidden_size=hidden_dim, 
-                                    batch_first=True, 
-                                    bidirectional=True
+                                    batch_first=True,
+                                    num_layers=2,
+                                    dropout=0.2,
+                                    bidirectional=False
+                                   )
+
+        self.epitope_lstm2 = nn.LSTM(input_size=embedding_dim, 
+                                    hidden_size=hidden_dim, 
+                                    batch_first=True,
+                                    num_layers=2,
+                                    dropout=0.2,
+                                    bidirectional=False
                                    )
 
         self.linears = nn.Sequential(
-            nn.Linear(2*hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, 1)
+            # nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(2*hidden_dim, 1),
+        
         )
 
-    def forward(self, antigen, antigen_full, mask):
-        out, _ = self.epitope_lstm(antigen)
-        out = out[:, -1, :]
+    def forward(self, antigen, antigen_reversed, antigen_full, mask):
+        lengths = mask.sum(axis=1).type(torch.long)
+        # out = pack_padded_sequence(antigen, lengths, batch_first=True, enforce_sorted=False)
+        out1, _ = self.epitope_lstm(antigen)
+        out2, _ = self.epitope_lstm(antigen_reversed)
+        # out, _ = self.epitope_lstm2(out)
+        out1 = out1[range(out1.shape[0]), lengths-1, :]
+        out2 = out2[range(out2.shape[0]), lengths-1, :]
+        out = torch.concat([out1, out2], axis=1)
+        out = self.linears(out)
+        return out.squeeze(-1)
+
+class CustomLSTM2(nn.Module):
+    def __init__(self, embedding_dim, hidden_dim):
+        super().__init__()
+        self.epitope_lstm = nn.LSTM(input_size=embedding_dim, 
+                                    hidden_size=hidden_dim, 
+                                    batch_first=True,
+                                    num_layers=2,
+                                    dropout=0.2,
+                                    bidirectional=True
+                                   )
+
+        # self.epitope_lstm2 = nn.LSTM(input_size=embedding_dim, 
+        #                             hidden_size=hidden_dim, 
+        #                             batch_first=True,
+        #                             num_layers=2,
+        #                             dropout=0.2,
+        #                             bidirectional=False
+        #                            )
+
+        self.linears = nn.Sequential(
+            nn.Linear(2*hidden_dim, hidden_dim),
+            nn.Linear(2*hidden_dim, 1),
+        
+        )
+
+    def forward(self, antigen, antigen_reversed, antigen_full, mask, lengths):
+        
+        out = pack_padded_sequence(antigen, lengths, batch_first=True, enforce_sorted=False)
+        out, (_, _) = self.epitope_lstm(antigen)
+        # out = pad_packed_sequence(out)
+        # out, _ = self.epitope_lstm2(out)
+        out = out[range(out.shape[0]), lengths-1, :]
+
         out = self.linears(out)
         return out.squeeze(-1)
 
@@ -31,6 +85,10 @@ class Linear(nn.Module):
         self.linears = nn.Sequential(
             nn.Linear(embedding_dim, hidden_dim),
             nn.ReLU(),
+            nn.Dropout(0.3),
+            # nn.Linear(hidden_dim, hidden_dim),
+            # nn.ReLU(),
+            # nn.Dropout(0.3),
             nn.Linear(hidden_dim, 1)
         )
 
@@ -43,17 +101,16 @@ class Linear(nn.Module):
         self.linear2 = nn.Linear(hidden_dim, 1)
         self.linear_full = nn.Linear(2, embedding_dim)
 
+        self.fc = nn.Linear(embedding_dim, 1)
+        
     def forward(self, epitope, antigen_full, mask):
-        antigen_full = self.linear_full(antigen_full)
+        # antigen_full = self.linear_full(antigen_full)
         lengths = mask.sum(axis=1).unsqueeze(1)
-        # mask = mask.unsqueeze(-1)
-        # out = self.linear1(epitope)
-        # out = out * mask
-        # out = out.sum(axis=1) / lengths
-        # out = self.linear2(out).squeeze(-1)
         out = epitope.sum(axis=1) / lengths
-        out = out + antigen_full
-        out = self.linears(out).squeeze(-1)
+        # out = out + antigen_full
+        # out = self.linears(out).squeeze(-1)
+        # out = epitope.mean(axis=1)
+        out = self.linears(out).squeeze(axis=-1)
         return out
 
 class Transformer(nn.Module):
